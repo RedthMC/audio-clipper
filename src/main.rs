@@ -30,7 +30,7 @@ async fn main() {
     client.start().await.expect("Client ended: ");
 }
 
-struct Handler;wwwwww
+struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {

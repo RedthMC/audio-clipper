@@ -1,10 +1,11 @@
+mod error;
 mod voice;
 
-use std::env;
+use std::{env, sync::Arc};
 
 use dotenv::dotenv;
 use serenity::{
-    all::{CreateAttachment, CreateMessage},
+    all::{CreateAttachment, CreateMessage, VoiceState},
     async_trait,
     client::{Client, Context, EventHandler},
     model::{channel::Message, gateway::Ready},
@@ -12,6 +13,7 @@ use serenity::{
 };
 
 use songbird::{driver::DecodeMode, Config, SerenityInit};
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -22,7 +24,7 @@ async fn main() {
     let songbird_config = Config::default().decode_mode(DecodeMode::Decode);
 
     let mut client = Client::builder(&token, intents)
-        .event_handler(Handler)
+        .event_handler(Handler::default())
         .register_songbird_from_config(songbird_config)
         .await
         .expect("Err creating client");
@@ -30,7 +32,10 @@ async fn main() {
     client.start().await.expect("Client ended: ");
 }
 
-struct Handler;
+#[derive(Default)]
+struct Handler {
+    voice_clipper: Arc<Mutex<voice::VoiceClipper>>,
+}
 
 #[async_trait]
 impl EventHandler for Handler {
@@ -39,26 +44,37 @@ impl EventHandler for Handler {
     }
 
     async fn message(&self, ctx: Context, message: Message) {
+        if message.content == "!join" {
+            self.voice_clipper
+                .lock()
+                .await
+                .join(
+                    &ctx,
+                    message.guild_id.expect("no guild"),
+                    message.channel_id,
+                )
+                .await
+                .unwrap();
+            return;
+        }
+
         if message.content != "!clip" {
             return;
         }
 
-        let bytes = voice::join(
-            &ctx,
-            message.guild_id.expect("no guild"),
-            message.channel_id,
-        )
-        .await;
+        match self.voice_clipper.lock().await.clip(message.channel_id) {
+            Ok(bytes) => {
+                let file = CreateAttachment::bytes(bytes, "output.mp3");
+                let reply = CreateMessage::new().add_file(file).reference_message(&message);
 
-        let file = CreateAttachment::bytes(bytes, "output.mp3");
-        let reply = CreateMessage::new()
-            .add_file(file)
-            .reference_message(&message);
-
-        message
-            .channel_id
-            .send_message(ctx, reply)
-            .await
-            .expect("reply failed");
+                message.channel_id.send_message(ctx, reply).await.expect("reply failed");
+            }
+            Err(error::Error::NoConnection) => {
+                message.reply(ctx, "!join first").await.expect("reply failed");
+            }
+            Err(_) => {
+                message.reply(ctx, "internal issue").await.expect("reply failed");
+            }
+        };
     }
 }

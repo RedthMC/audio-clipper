@@ -1,5 +1,4 @@
-use std::sync::PoisonError;
-
+use std::{fmt::Display, sync::PoisonError};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -8,6 +7,22 @@ pub enum Error {
     NoConnection,
     CantConnect,
     SkillIssue,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::NoConnection => write!(f, "No connection to vc"),
+            Error::CantConnect => write!(f, "Failed to connect"),
+            Error::SkillIssue => write!(f, "Internal error"),
+        }
+    }
+}
+
+impl From<serenity::Error> for Error {
+    fn from(_: serenity::Error) -> Self {
+        Error::SkillIssue
+    }
 }
 
 impl From<mp3lame_encoder::BuildError> for Error {

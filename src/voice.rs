@@ -19,39 +19,33 @@ pub struct VoiceClipper {
 }
 
 impl VoiceClipper {
-    pub async fn join(
-        &mut self,
-        ctx: &Discord,
-        guild_id: GuildId,
-        channel_id: ChannelId,
-    ) -> Result<()> {
+    pub async fn join(&mut self, ctx: &Discord, guild_id: GuildId, channel_id: ChannelId) -> Result<()> {
         let arc = Arc::new(Mutex::new(VoiceRecorder::default()));
 
         let sb = songbird::get(ctx).await.ok_or(Error::CantConnect)?;
-        sb.join(guild_id, channel_id)
-            .await?
-            .lock()
-            .await
-            .add_global_event(
-                CoreEvent::VoiceTick.into(),
-                Handler {
-                    voice_recorder: arc.clone(),
-                },
-            );
+        sb.join(guild_id, channel_id).await?.lock().await.add_global_event(
+            CoreEvent::VoiceTick.into(),
+            Handler {
+                voice_recorder: arc.clone(),
+            },
+        );
 
         self.map.insert(channel_id, arc);
 
         Ok(())
     }
 
+    pub async fn leave(&mut self, ctx: &Discord, guild_id: GuildId, channel_id: ChannelId) -> Result<()> {
+        let sb = songbird::get(ctx).await.ok_or(Error::CantConnect)?;
+        match self.map.remove(&channel_id) {
+            Some(_) => sb.leave(guild_id).await?,
+            None => {},
+        };
+        Ok(())
+    }
+
     fn get_audio(&self, channel_id: ChannelId) -> Result<VecDeque<i16>> {
-        Ok(self
-            .map
-            .get(&channel_id)
-            .ok_or(Error::NoConnection)?
-            .lock()?
-            .writer
-            .clone())
+        Ok(self.map.get(&channel_id).ok_or(Error::NoConnection)?.lock()?.writer.clone())
     }
 
     pub fn clip(&self, channel_id: ChannelId) -> Result<Box<[u8]>> {
@@ -72,10 +66,7 @@ impl VoiceClipper {
         println!("finalized!!!!");
 
         output.truncate(header_len + body_len);
-        return Ok(output
-            .iter()
-            .map(|b| unsafe { b.assume_init_read() })
-            .collect());
+        return Ok(output.iter().map(|b| unsafe { b.assume_init_read() }).collect());
     }
 }
 
@@ -91,10 +82,7 @@ impl EventHandler for Handler {
             EventContext::VoiceTick(vt) => vt,
             _ => return None,
         };
-        self.voice_recorder
-            .lock()
-            .expect("voice recorder not obtained")
-            .write(tick);
+        self.voice_recorder.lock().expect("voice recorder not obtained").write(tick);
         None
     }
 }
@@ -128,10 +116,7 @@ impl VoiceRecorder {
     }
 
     fn pad_silence(writer: &mut VecDeque<i16>, last_time: Instant) -> Option<()> {
-        let elapsed_ms = last_time
-            .elapsed()
-            .saturating_sub(Duration::from_millis(20))
-            .as_millis() as usize;
+        let elapsed_ms = last_time.elapsed().saturating_sub(Duration::from_millis(20)).as_millis() as usize;
         if elapsed_ms < 20 {
             return None;
         }
